@@ -6,106 +6,80 @@ import java.util.List;
 import java.util.Map;
 
 import org.eclipse.paho.client.mqttv3.MqttClient;
+import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
-import org.eclipse.paho.client.mqttv3.MqttCallback;
-import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
+//import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 
-import backtype.storm.Config;
-import backtype.storm.LocalCluster;
-import backtype.storm.spout.SpoutOutputCollector;
+import backtype.storm.task.OutputCollector;
 import backtype.storm.task.TopologyContext;
-import backtype.storm.topology.IRichSpout;
 import backtype.storm.topology.OutputFieldsDeclarer;
+import backtype.storm.topology.base.BaseRichBolt;
+import backtype.storm.tuple.Tuple;
 
-import backtype.storm.topology.TopologyBuilder;
-import backtype.storm.tuple.Values;
-import backtype.storm.utils.Utils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-public class MQTTSpout implements MqttCallback, IRichSpout {
-	MqttClient client;
-	SpoutOutputCollector _collector;
-	LinkedList<String> messages;
+public class MQTTSpout extends BaseRichBolt {
+	
+    //MQTT PARAMETERS
+    String topic        = "locationMSG";
+    String content      = "Message from MqttPublishSample";
+    int qos             = 2;
+    String broker       = "tcp://1.2.3.4:1883";     //REPLACE WITH YOUR MQTT IP
+    String clientId     = "StormLocationMSGTopology";
+    //MemoryPersistence persistence = new MemoryPersistence();
 
-	String _broker_url;
-	String _client_id;
-	String _topic;
+    @Override
+    public void prepare(Map map, TopologyContext topologyContext, OutputCollector outputCollector) {
+        this.outputCollector = outputCollector;
+        config = (Map<String,String>) map;
+    }
 
-	public MQTTSpout(String broker_url, String clientId, String topic) {
-		_broker_url = broker_url;
-		_client_id = clientId;
-		_topic = topic;
-		messages = new LinkedList<String>();
-	}
+    @Override
+    public void execute(Tuple input) {
 
-	public void messageArrived(String topic, MqttMessage message)
-			throws Exception {
-		messages.add(message.toString());
-	}
+        try { 
+            final String MENmac = input.getStringByField("MENmac");
+            final String x = input.getStringByField("x");
+            final String y = input.getStringByField("y");
+            content= MENmac+" "+x+" "+y;
+             try {
+                MqttClient sampleClient = new MqttClient(broker, clientId);
+                MqttConnectOptions connOpts = new MqttConnectOptions();
+                connOpts.setCleanSession(true);
+                sampleClient.connect(connOpts);
+                //System.out.println("Connected");
+                //System.out.println("Publishing message: "+content);
+                MqttMessage message = new MqttMessage(content.getBytes());
+                message.setQos(qos);
+                sampleClient.publish(topic, message);
+                //System.out.println("Message published");
+                sampleClient.disconnect();
+                //System.out.println("Disconnected");
+                //System.exit(0);
+            } catch(MqttException me) {
+                System.out.println("reason "+me.getReasonCode());
+                System.out.println("msg "+me.getMessage());
+                System.out.println("loc "+me.getLocalizedMessage());
+                System.out.println("cause "+me.getCause());
+                System.out.println("excep "+me);
+                me.printStackTrace();
+        }    
+            outputCollector.ack(input);
 
-	public void connectionLost(Throwable cause) {
-	}
+        } catch (Throwable t) {
 
-	public void deliveryComplete(IMqttDeliveryToken token) {
-	}
+            outputCollector.reportError(t);
+            outputCollector.fail(input);
 
-	public void open(Map conf, TopologyContext context,
-			SpoutOutputCollector collector) {
-		_collector = collector;
+        }
+    }
 
-		try {
-			client = new MqttClient(_broker_url, _client_id);
-			client.connect();
-			client.setCallback(this);
-			client.subscribe(_topic);
-
-		} catch (MqttException e) {
-			e.printStackTrace();
-		}
-	}
-
-	public void close() {
-	}
-
-	public void activate() {
-	}
-
-	public void deactivate() {
-	}
-
-	public void nextTuple() {
-		while (!messages.isEmpty()) {
-			_collector.emit(new Values(messages.poll()));
-		}
-	}
-
-	public void ack(Object msgId) {
-	}
-
-	public void fail(Object msgId) {
-	}
-
-	public void declareOutputFields(OutputFieldsDeclarer declarer) {
-	}
-
-	public Map<String, Object> getComponentConfiguration() {
-		return null;
-	}
-
-	public static void main(String[] args) {
-		TopologyBuilder builder = new TopologyBuilder();
-		List<String> hosts = new ArrayList<String>();
-		hosts.add("localhost");
-
-		builder.setSpout("spout", new MQTTSpout(
-				"tcp://test.mosquitto.org:1883", "storm-mqtt-test", "#"), 3);
-
-		Config conf = new Config();
-		// conf.setDebug(true);
-
-		LocalCluster cluster = new LocalCluster();
-		cluster.submitTopology("kafka-test", conf, builder.createTopology());
-
-		Utils.sleep(600000);
-	}
+    @Override
+    public void declareOutputFields(OutputFieldsDeclarer outputFieldsDeclarer) {
+        //FINAL BOLT: NO OUTPUT
+        //outputFieldsDeclarer.declare(new Fields(new String[]{"MENmac", "x", "y"}));
+    }
+	
 }
